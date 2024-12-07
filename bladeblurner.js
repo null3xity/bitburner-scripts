@@ -52,7 +52,7 @@ export async function main(ns) {
         purchaseSkills(ns);
         if (REST_NEEDED) await rest(ns, REST_CUTOFF);
 
-        if (combatStats(ns) < 200) {
+        else if (combatStats(ns) < 200) {
             ns.bladeburner.startAction("gen", "Training");
             await ns.sleep(ns.bladeburner.getActionTime("gen", "Training"));
         } else await runAction(ns);
@@ -194,11 +194,13 @@ class Action {
         this.isRetire = (this.type == "blackop") ? true : this.#isRetiringAction();
     }
 
+    
     #isRetiringAction() {
-        //i will deal with it later
+        let retiring = false;
         for (let i of ["Bounty Hunter", "Retirement", "Raid", "Stealth Retirement Operation", "Assassination"]) {
-            return (this.name == i);
+            if (this.name == i) retiring = true;
         }
+        return retiring;
     }
 
     getType() {
@@ -209,16 +211,16 @@ class Action {
     }
 
     getPriority() {
-        let priority;
+        let basePriority;
         if (this.type == "blackop") priority = 5;
         else if (this.type == "op" && this.isRetire) priority = 4;
         else if (this.type == "op" && !this.isRetire) priority = 3;
         else if (this.type == "contract" && this.isRetire) priority = 2;
-        else if (this.type == "contract" && !this.isRetire) priority = 1;
-
+        else if (this.type == "contract" && !this.isRetire) priority = 1
+        
         if (this.minSuccess < 0.50) priority = 0;
 
-        return priority;
+        return (basePriority * this.minSuccess);
     }
 
     debug(ns) {
