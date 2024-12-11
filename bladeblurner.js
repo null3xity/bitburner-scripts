@@ -5,12 +5,14 @@ const GENERAL_ACTIONS = ["Training", "Field Analysis", "Recruitment", "Diplomacy
 const OPERATIONS = ["Investigation", "Undercover Operation", "Sting Operation", "Raid", "Stealth Retirement Operation", "Assassination"];
 const CONTRACTS = ["Tracking", "Bounty Hunter", "Retirement"];
 const BLACKOPS = ["Operation Typhoon", "Operation Zero", "Operation X", "Operation Titan", "Operation Ares", "Operation Archangel", "Operation Juggernaut", "Operation Red Dragon", "Operation K", "Operation Deckard", "Operation Tyrell", "Operation Wallace", "Operation Shoulder of Orion", "Operation Hyron", "Operation Morpheus", "Operation Ion Storm", "Operation Annihilus", "Operation Ultron", "Operation Centurion", "Operation Vindictus", "Operation Daedalus"];
+const RETIRING_ACTIONS = ["Bounty Hunter", "Retirement", "Raid", "Stealth Retirement Operation", "Assassination"];
 //const TEAM_PERCENT = 0.7;
 let STAMINA, PLAYER, CITY, CITY_CHAOS, RANK, SKILL_POINTS, TIMER;
-let NEXT_BLACK_OP;
-let MIN_BLACKOP_CHANCE;
+// let NEXT_BLACK_OP;
+// let MIN_BLACKOP_CHANCE;
 
 const ACTION_INFO = [];
+// const SORTED_INFO = [];
 
 //const CHAOS_CUTOFF = 50;
 
@@ -27,18 +29,17 @@ export async function main(ns) {
             ns.print(`Waiting for total stats to hit 100. Current: ${combatStats(ns, PLAYER)}`);
         } else {
             ns.print(`Joining Bladeburner...`);
-            joinBladeburner(ns, PLAYER);
+            ns.bladeburner.joinBladeburnerDivision();
         }
         await ns.sleep(500);
     }
 
-
+    //initializes the skill + action lists, respectively
     skillsInit(ns);
     actionsInit(ns);
 
     while (true) {
         ns.bladeburner.stopBladeburnerAction();
-        ns.print(`DEBUG PRINT TO MAKE SURE ITS LOOPING`);
         CITY = ns.bladeburner.getCity();
         STAMINA = ns.bladeburner.getStamina(); // [current, max]
         CITY_CHAOS = ns.bladeburner.getCityChaos(CITY);
@@ -52,6 +53,8 @@ export async function main(ns) {
         purchaseSkills(ns);
         if (REST_NEEDED) await rest(ns, REST_CUTOFF);
 
+        if (CITY_CHAOS > 50) await decreaseChaos(ns);
+        
         if (combatStats(ns) < 200) {
             ns.bladeburner.startAction("gen", "Training");
             await ns.sleep(ns.bladeburner.getActionTime("gen", "Training"));
@@ -76,18 +79,14 @@ function intervalTimer(ns, isResting) {
 
 /** @param {NS} ns */
 async function decreaseChaos(ns) {
-    while (CITY_CHAOS > 30) {
-        ns.bladeburner.startAction(CITY_CHAOS);
+    if (CITY_CHAOS > 30) {
+        ns.bladeburner.startAction("gen", "Diplomacy",);
         await ns.sleep(ns.bladeburner.getActionTime("gen", "Diplomacy"));
     }
 }
 /** @param {NS} ns */
 async function rest(ns, cutoff) {
-    if (CITY_CHAOS > 50) {
-        await decreaseChaos(ns);
-    }
-
-    while (STAMINA[0] < cutoff) {
+    if (STAMINA[0] < cutoff) {
         ns.clearLog();
         ns.print(`(RESTING) CURRENT STAMINA: ${ns.formatPercent(STAMINA[0] / STAMINA[1], 3)}`);
         ns.bladeburner.startAction("gen", "Training");
@@ -106,7 +105,8 @@ function skillsInit(ns) {
     for (let skill of SKILLS) {
         SKILL_INFO.push(new Skill(ns, skill));
     }
-    SKILL_INFO.sort((a, b) => { a.priority - b.priority });
+
+    SKILL_INFO.sort((a, b) => { b.priority - a.priority });
 }
 
 /** @param {NS} ns */
@@ -121,6 +121,7 @@ function actionsInit(ns) {
         ACTION_INFO.push(new Action(ns, action));
     }
     ACTION_INFO.sort((a, b) => b.priority - a.priority);
+
     for (let i of ACTION_INFO) i.debug(ns);
 }
 
@@ -190,15 +191,34 @@ class Action {
         //blackops cannot be leveled
         this.level = (this.type == "blackop") ? undefined : ns.bladeburner.getActionCurrentLevel(this.type, this.name);
         this.time = ns.bladeburner.getActionTime(this.type, this.name);
+        this.isRetire = (this.type == "blackop") ? true : (this.isRetiringAction()) ? true : false;
         this.priority = this.getPriority();
-        this.isRetire = (this.type == "blackop") ? true : this.#isRetiringAction();
     }
 
-    #isRetiringAction() {
-        //i will deal with it later
-        for (let i of ["Bounty Hunter", "Retirement", "Raid", "Stealth Retirement Operation", "Assassination"]) {
-            return (this.name == i);
+    getPriority() {
+        let priority = 0;
+
+        if (this.isRetire === true) {
+            if (this.type === "blackop") priority = 5;
+            if (this.type === "op") priority = 4;
+            if (this.type === "contract") priority = 2;
+        } else if (this.isRetire === false) {
+            if (this.type === "op") priority = 3;
+            if (this.type === "contract") priority = 1;
         }
+
+        if (this.minSuccess < 0.50) { priority = 0 } 
+        return (priority * this.minSuccess);
+    }
+
+    isRetiringAction() {
+        for (let i of RETIRING_ACTIONS) {
+            if (i === this.name) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     getType() {
@@ -208,20 +228,8 @@ class Action {
         return "blackop";
     }
 
-    getPriority() {
-        let priority;
-        if (this.type == "blackop") priority = 5;
-        else if (this.type == "op" && this.isRetire) priority = 4;
-        else if (this.type == "op" && !this.isRetire) priority = 3;
-        else if (this.type == "contract" && this.isRetire) priority = 2;
-        else if (this.type == "contract" && !this.isRetire) priority = 1;
-
-        if (this.minSuccess < 0.50) priority = 0;
-
-        return priority;
-    }
-
     debug(ns) {
-        ns.tprint(`${this.name}, ${this.type}, ${this.minSuccess}, ${this.priority}`);
+        ns.tprint(`${this.name}, ${this.type}, ${ns.formatPercent(this.minSuccess.toFixed(4))}, ${this.priority.toFixed(4)}, ${this.isRetire}`);
     }
+
 }
